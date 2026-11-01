@@ -1,0 +1,89 @@
+<!--
+  FATE Autopilot icon (Sojiroh "Autopilot" family): radial emerald background, glowing dial ring with ticks,
+  gold heading chevron on top, and a faceted bicolor gemstone with a gold FATE star in the middle.
+  Render: rsvg-convert -w 512 -h 512 -b '#05140f' Icon.svg -o Icon.png && magick Icon.png -alpha off Icon.png
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="75%">
+      <stop offset="0" stop-color="#0f5a45"/>
+      <stop offset="0.55" stop-color="#0a2f26"/>
+      <stop offset="1" stop-color="#05140f"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9dffd0"/>
+      <stop offset="1" stop-color="#1fbf7a"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd978"/>
+      <stop offset="1" stop-color="#e09a2b"/>
+    </linearGradient>
+    <linearGradient id="crown" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4fff9"/>
+      <stop offset="1" stop-color="#9fe8c4"/>
+    </linearGradient>
+    <linearGradient id="facetL" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d6fbe9"/>
+      <stop offset="1" stop-color="#53c997"/>
+    </linearGradient>
+    <linearGradient id="facetR" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6fd8a8"/>
+      <stop offset="1" stop-color="#157a54"/>
+    </linearGradient>
+    <linearGradient id="pavL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3fb98a"/>
+      <stop offset="1" stop-color="#0f6b49"/>
+    </linearGradient>
+    <linearGradient id="pavR" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c9467"/>
+      <stop offset="1" stop-color="#08402c"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- autopilot dial -->
+  <g transform="translate(256 268)">
+    <circle r="178" fill="none" stroke="#9dffd0" stroke-opacity="0.12" stroke-width="30"/>
+    <circle r="178" fill="none" stroke="url(#ring)" stroke-width="10" filter="url(#glow)"/>
+    <g stroke="#c8ffe6" stroke-linecap="round">
+      <line y1="-150" y2="-132" stroke-width="7" transform="rotate(0)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(30)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(60)"/>
+      <line y1="-150" y2="-132" stroke-width="7" transform="rotate(90)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(120)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(150)"/>
+      <line y1="-150" y2="-132" stroke-width="7" transform="rotate(180)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(210)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(240)"/>
+      <line y1="-150" y2="-132" stroke-width="7" transform="rotate(270)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(300)"/>
+      <line y1="-150" y2="-138" stroke-width="5" transform="rotate(330)"/>
+    </g>
+  </g>
+
+  <!-- heading chevron above the dial -->
+  <path d="M256 34 L300 104 L256 86 L212 104 Z" fill="url(#gold)" filter="url(#glow)"/>
+
+  <!-- faceted gemstone (bicolor gemstone reward) -->
+  <g filter="url(#glow)" stroke-linejoin="round">
+    <!-- crown -->
+    <path d="M190 206 L322 206 L352 252 L160 252 Z" fill="url(#crown)"/>
+    <path d="M190 206 L222 206 L204 252 L160 252 Z" fill="url(#facetL)"/>
+    <path d="M322 206 L290 206 L308 252 L352 252 Z" fill="url(#facetR)"/>
+    <path d="M222 206 L290 206 L308 252 L204 252 Z" fill="#effff7"/>
+    <!-- pavilion -->
+    <path d="M160 252 L352 252 L256 372 Z" fill="url(#pavL)"/>
+    <path d="M256 252 L352 252 L256 372 Z" fill="url(#pavR)"/>
+    <path d="M160 252 L204 252 L256 372 Z" fill="#53c997" fill-opacity="0.55"/>
+    <path d="M308 252 L352 252 L256 372 Z" fill="#06301f" fill-opacity="0.45"/>
+    <path d="M190 206 L322 206 L352 252 L256 372 L160 252 Z" fill="none" stroke="#d6fbe9" stroke-width="3"/>
+  </g>
+
+  <!-- FATE star on the gem -->
+  <path d="M256 226 L267 262 L303 273 L267 284 L256 322 L245 284 L209 273 L245 262 Z" fill="url(#gold)" stroke="#a8641a" stroke-width="3" stroke-linejoin="round"/>
+</svg>

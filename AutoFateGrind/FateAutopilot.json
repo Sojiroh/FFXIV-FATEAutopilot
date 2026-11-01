@@ -1,0 +1,17 @@
+{
+  "Author": "Sojiroh",
+  "Name": "FATE Autopilot",
+  "InternalName": "FateAutopilot",
+  "Punchline": "FATEs, farmed for you.",
+  "Description": "Farms FATEs for you: tick the zones, and the plugin teleports in, finds active FATEs, and runs them in a loop until your target is met. Based on Auto FATE Grind by XeldarAlz.",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/Sojiroh/FFXIV-FATEAutopilot",
+  "IconUrl": "https://raw.githubusercontent.com/Sojiroh/FFXIV-FATEAutopilot/master/AutoFateGrind/Images/Icon.png",
+  "Tags": [
+    "FATE",
+    "Shared FATE",
+    "Bicolor Gemstones",
+    "Date with Destiny",
+    "Automation"
+  ]
+}

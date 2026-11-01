@@ -1,0 +1,431 @@
+using System;
+using System.Linq;
+using AutoFateGrind.Core.External;
+using AutoFateGrind.Core.Game.Fates;
+using AutoFateGrind.Core.Localization;
+using AutoFateGrind.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
+using clib.Utils;
+
+namespace AutoFateGrind.Windows.Sections.Config;
+
+internal static class FilterSettings
+{
+    private const int MaxDurationMinSec = 60;
+
+    private const int MaxDurationMaxSec = 1800;
+
+    private const int MaxLevel = 100;
+
+    private const int AutoBlacklistDeathsMin = 1;
+
+    private const int AutoBlacklistDeathsMax = 10;
+
+    private static int blacklistAddSelection;
+
+    private static readonly (FateSortCriterion Criterion, LocString Label)[] sortCriterionLabels =
+    [
+        (FateSortCriterion.HasBonusWithTwist, L.Settings.SortBonusTwist),
+        (FateSortCriterion.Progress, L.Settings.SortProgress),
+        (FateSortCriterion.HasBonus, L.Settings.SortBonus),
+        (FateSortCriterion.TimeRemainingUrgent, L.Settings.SortUrgent),
+        (FateSortCriterion.Distance, L.Settings.SortDistance),
+        (FateSortCriterion.TimeRemaining, L.Settings.SortTimeRemaining),
+        (FateSortCriterion.Level, L.Settings.SortLevel),
+        (FateSortCriterion.Name, L.Settings.SortName)
+    ];
+
+    private static int sortAddSelection;
+
+    private static readonly (PublicEvent.FateRule Rule, LocString Label, LocString Helper)[] fateRuleRows =
+    [
+        (PublicEvent.FateRule.Normal, L.Settings.RuleNormal, L.Settings.RuleNormalHelp),
+        (PublicEvent.FateRule.Collect, L.Settings.RuleCollect, L.Settings.RuleCollectHelp),
+        (PublicEvent.FateRule.Escort, L.Settings.RuleEscort, L.Settings.RuleEscortHelp),
+        (PublicEvent.FateRule.Defend, L.Settings.RuleDefend, L.Settings.RuleDefendHelp),
+        (PublicEvent.FateRule.EventFate, L.Settings.RuleEvent, L.Settings.RuleEventHelp),
+        (PublicEvent.FateRule.Chase, L.Settings.RuleChase, L.Settings.RuleChaseHelp),
+        (PublicEvent.FateRule.ConcertedWorks, L.Settings.RuleBoss, L.Settings.RuleBossHelp),
+        (PublicEvent.FateRule.Fete, L.Settings.RuleFete, L.Settings.RuleFeteHelp)
+    ];
+
+    public static void Draw(Configuration cfg)
+    {
+        DrawEligibilityGroup(cfg);
+        DrawSkipTypesGroup(cfg);
+        DrawPriorityGroup(cfg);
+        DrawBlacklistGroup(cfg);
+    }
+
+    private static void DrawEligibilityGroup(Configuration cfg)
+    {
+        using (SettingsGroup.Begin(Loc.T(L.Settings.FiltersEligibility)))
+        {
+            SettingsRow.Draw(Loc.T(L.Settings.MinTime), Loc.T(L.Settings.MinTimeHelp), SettingsControls.RowSliderWidth, () =>
+            {
+                SettingsControls.DrawIntSlider(cfg, "##filt_mintime", () => cfg.MinTimeRemainingSec, v =>
+                {
+                    cfg.MinTimeRemainingSec = v;
+                }, 30, 600, Loc.T(L.Settings.MinTimeFormat));
+            });
+            SettingsRow.Draw(Loc.T(L.Settings.MaxProgress), Loc.T(L.Settings.MaxProgressHelp), SettingsControls.RowSliderWidth, () =>
+            {
+                SettingsControls.DrawIntSlider(cfg, "##filt_maxprog", () => cfg.MaxProgressPct, v =>
+                {
+                    cfg.MaxProgressPct = v;
+                }, 50, 99, "%d%%");
+            });
+            SettingsRow.Draw(Loc.T(L.Settings.MaxDuration), Loc.T(L.Settings.MaxDurationHelp), SettingsControls.ToggleWidth, () =>
+            {
+                SettingsControls.DrawToggle(cfg, () => cfg.MaxDurationFilterEnabled, v =>
+                {
+                    cfg.MaxDurationFilterEnabled = v;
+                }, "##filt_dur_on");
+            }, 22f);
+            using (Motion.PushSwitch("##filt_dur_body", cfg.MaxDurationFilterEnabled))
+            {
+                if (cfg.MaxDurationFilterEnabled)
+                {
+                    SettingsRow.Draw(Loc.T(L.Settings.MaxDurationLimit), Loc.T(L.Settings.MaxDurationLimitHelp), SettingsControls.RowSliderWidth, () =>
+                    {
+                        SettingsControls.DrawIntSlider(cfg, "##filt_dur", () => cfg.MaxFateDurationSec, v =>
+                        {
+                            cfg.MaxFateDurationSec = v;
+                        }, MaxDurationMinSec, MaxDurationMaxSec, Loc.T(L.Settings.MinTimeFormat));
+                    });
+                }
+                else
+                {
+                    SettingsRow.Note(Loc.T(L.Settings.MaxDurationOff));
+                }
+            }
+            SettingsRow.Draw(Loc.T(L.Settings.LevelWindow), Loc.T(L.Settings.LevelWindowHelp), SettingsControls.ToggleWidth, () =>
+            {
+                SettingsControls.DrawToggle(cfg, () => cfg.LevelWindowEnabled, v =>
+                {
+                    cfg.LevelWindowEnabled = v;
+                }, "##filt_win_on");
+            }, 22f);
+            using (Motion.PushSwitch("##filt_win_body", cfg.LevelWindowEnabled))
+            {
+                if (cfg.LevelWindowEnabled)
+                {
+                    SettingsRow.Draw(Loc.T(L.Settings.LevelLowest), Loc.T(L.Settings.LevelLowestHelp), SettingsControls.RowSliderWidth, () =>
+                    {
+                        SettingsControls.DrawIntSlider(cfg, "##filt_win_min", () => cfg.MinFateLevel, v =>
+                        {
+                            cfg.MinFateLevel = v;
+                            if (cfg.MaxFateLevel < v)
+                            {
+                                cfg.MaxFateLevel = v;
+                            }
+                        }, 1, MaxLevel, Loc.T(L.Settings.LevelFormat));
+                    });
+                    SettingsRow.Draw(Loc.T(L.Settings.LevelHighest), Loc.T(L.Settings.LevelHighestHelp), SettingsControls.RowSliderWidth, () =>
+                    {
+                        SettingsControls.DrawIntSlider(cfg, "##filt_win_max", () => cfg.MaxFateLevel, v =>
+                        {
+                            cfg.MaxFateLevel = v;
+                            if (cfg.MinFateLevel > v)
+                            {
+                                cfg.MinFateLevel = v;
+                            }
+                        }, 1, MaxLevel, Loc.T(L.Settings.LevelFormat));
+                    });
+                }
+                else
+                {
+                    SettingsRow.Note(Loc.T(L.Settings.LevelWindowOff));
+                }
+            }
+            SettingsRow.Draw(Loc.T(L.Settings.LevelRange), Loc.T(L.Settings.LevelRangeHelp), SettingsControls.ToggleWidth, () =>
+            {
+                SettingsControls.DrawToggle(cfg, () => cfg.LevelRangeFilterEnabled, v =>
+                {
+                    cfg.LevelRangeFilterEnabled = v;
+                }, "##filt_lvl_on");
+            }, 22f);
+            using var levelRangeStyle = Motion.PushSwitch("##filt_lvl_body", cfg.LevelRangeFilterEnabled);
+            if (!cfg.LevelRangeFilterEnabled)
+            {
+                SettingsRow.Note(Loc.T(L.Settings.LevelRangeOff));
+                return;
+            }
+            SettingsRow.Draw(Loc.T(L.Settings.LevelBelow), Loc.T(L.Settings.LevelBelowHelp), SettingsControls.RowSliderWidth, () =>
+            {
+                SettingsControls.DrawIntSlider(cfg, "##filt_lvl_below", () => cfg.MaxLevelBelow, v =>
+                {
+                    cfg.MaxLevelBelow = v;
+                }, 0, MaxLevel, Loc.T(L.Settings.LevelFormat));
+            });
+            SettingsRow.Draw(Loc.T(L.Settings.LevelAbove), Loc.T(L.Settings.LevelAboveHelp), SettingsControls.RowSliderWidth, () =>
+            {
+                SettingsControls.DrawIntSlider(cfg, "##filt_lvl_above", () => cfg.MaxLevelAbove, v =>
+                {
+                    cfg.MaxLevelAbove = v;
+                }, 0, MaxLevel, Loc.T(L.Settings.LevelFormat));
+            });
+        }
+    }
+
+    private static void DrawSkipTypesGroup(Configuration cfg)
+    {
+        using (SettingsGroup.Begin(Loc.T(L.Settings.FiltersTypes)))
+        {
+            SettingsRow.DrawBlock(Loc.T(L.Settings.SkipTypes), Loc.T(L.Settings.SkipTypesHelp), () =>
+            {
+                DrawFateRuleSkipList(cfg);
+            });
+        }
+    }
+
+    private static void DrawPriorityGroup(Configuration cfg)
+    {
+        using (SettingsGroup.Begin(Loc.T(L.Settings.FiltersPriority)))
+        {
+            SettingsRow.DrawBlock(Loc.T(L.Settings.FatePriority), Loc.T(L.Settings.FatePriorityHelp), () =>
+            {
+                DrawSortOrderList(cfg);
+            });
+        }
+    }
+
+    private static void DrawBlacklistGroup(Configuration cfg)
+    {
+        using (SettingsGroup.Begin(Loc.T(L.Settings.FiltersBlacklist)))
+        {
+            SettingsRow.Draw(Loc.T(L.Settings.AutoBlacklistDeaths), Loc.T(L.Settings.AutoBlacklistDeathsHelp), SettingsControls.ToggleWidth, () =>
+            {
+                SettingsControls.DrawToggle(cfg, () => cfg.AutoBlacklistOnDeaths, v =>
+                {
+                    cfg.AutoBlacklistOnDeaths = v;
+                }, "##bl_deaths_on");
+            }, 22f);
+            using (Motion.PushSwitch("##bl_deaths_body", cfg.AutoBlacklistOnDeaths))
+            {
+                if (cfg.AutoBlacklistOnDeaths)
+                {
+                    SettingsRow.Draw(Loc.T(L.Settings.DeathsBeforeBlacklist), Loc.T(L.Settings.DeathsBeforeBlacklistHelp), SettingsControls.RowSliderWidth, () =>
+                    {
+                        SettingsControls.DrawIntSlider(cfg, "##bl_deaths", () => cfg.AutoBlacklistDeathCount, v =>
+                        {
+                            cfg.AutoBlacklistDeathCount = v;
+                        }, AutoBlacklistDeathsMin, AutoBlacklistDeathsMax, Loc.T(L.Settings.DeathsFormat));
+                    });
+                }
+                else
+                {
+                    SettingsRow.Note(Loc.T(L.Settings.AutoBlacklistDeathsOff));
+                }
+            }
+            SettingsRow.DrawBlock(Loc.T(L.Settings.AddByName), Loc.T(L.Settings.AddByNameHelp), () =>
+            {
+                DrawBlacklistPicker(cfg);
+            });
+            SettingsRow.DrawBlock(Loc.T(L.Settings.Blacklisted), Loc.T(L.Settings.BlacklistedHelp), () =>
+            {
+                DrawBlacklistList(cfg);
+            });
+        }
+    }
+
+    private static void DrawBlacklistPicker(Configuration cfg)
+    {
+        FateCatalogEntry[] all = FateCatalog.All;
+        if (all.Length == 0)
+        {
+            SettingsRow.Note(Loc.T(L.Settings.NoFatesInData), Styling.AccentRose);
+            return;
+        }
+        blacklistAddSelection = Math.Clamp(blacklistAddSelection, 0, all.Length - 1);
+        string[] labels = FateCatalog.Labels;
+        SettingsControls.DrawSearchableCombo("##bl_pick", labels, ref blacklistAddSelection, 380f);
+        ImGui.SameLine();
+        using (ImRaii.PushColor(ImGuiCol.Text, Styling.AccentMint))
+        {
+            if (ImGui.SmallButton($"{Loc.T(L.Common.Add)}##bl_add"))
+            {
+                FateBlacklist.Add(cfg, FateType.Normal, all[blacklistAddSelection].FateIds);
+            }
+        }
+    }
+
+    private static void DrawBlacklistList(Configuration cfg)
+    {
+        var blacklisted = FateBlacklist.All(cfg);
+        if (blacklisted.Count == 0)
+        {
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextMuted))
+            {
+                ImGui.TextUnformatted(Loc.T(L.Settings.NoBlacklisted));
+            }
+            return;
+        }
+        BlacklistedFateGroup? blacklistedFateGroup = null;
+        var frameHeight = ImGui.GetFrameHeight();
+        for (int i = 0; i < blacklisted.Count; i++)
+        {
+            var fateGroup = blacklisted[i];
+            ImGui.AlignTextToFramePadding();
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextStrong))
+            {
+                ImGui.TextUnformatted(fateGroup.Name);
+            }
+            ImGui.SameLine(SettingsGroup.InnerRightLocalX() - frameHeight);
+            if (IconButton.Draw(FontAwesomeIcon.Times, "##bl_rm_" + fateGroup.Name, frameHeight, Styling.AccentRose, Loc.T(L.Settings.RemoveFromBlacklist)))
+            {
+                blacklistedFateGroup = fateGroup;
+            }
+        }
+        if (blacklistedFateGroup is { } removed)
+        {
+            FateBlacklist.Remove(cfg, removed);
+        }
+    }
+
+    private static string LabelFor(FateSortCriterion criterion)
+    {
+        for (int i = 0; i < sortCriterionLabels.Length; i++)
+        {
+            if (sortCriterionLabels[i].Criterion == criterion)
+            {
+                return Loc.T(sortCriterionLabels[i].Label);
+            }
+        }
+        return criterion.ToString();
+    }
+
+    private static void DrawSortOrderList(Configuration cfg)
+    {
+        if (cfg.FateSortOrder.Count == 0)
+        {
+            cfg.FateSortOrder = FateScanner.DefaultSortOrder.Select(e => new FateSortEntry
+            {
+                Criterion = e.Criterion,
+                Descending = e.Descending
+            }).ToList();
+        }
+        int? moveUp = null;
+        int? moveDown = null;
+        int? remove = null;
+        var frameHeight = ImGui.GetFrameHeight();
+        var spacing = 4f * ImGuiHelpers.GlobalScale;
+        for (int i = 0; i < cfg.FateSortOrder.Count; i++)
+        {
+            var fateSortEntry = cfg.FateSortOrder[i];
+            ImGui.AlignTextToFramePadding();
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextDim))
+            {
+                ImGui.TextUnformatted($"{i + 1}.");
+            }
+            ImGui.SameLine();
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextStrong))
+            {
+                ImGui.TextUnformatted(LabelFor(fateSortEntry.Criterion));
+            }
+            var rightWidth = frameHeight * 4f + spacing * 3f;
+            ImGui.SameLine(SettingsGroup.InnerRightLocalX() - rightWidth);
+            if (IconButton.Draw((FontAwesomeIcon)(fateSortEntry.Descending ? 61792 : 61793), $"##sort_dir_{i}", frameHeight, tooltip: fateSortEntry.Descending ? Loc.T(L.Common.Descending) : Loc.T(L.Common.Ascending)))
+            {
+                fateSortEntry.Descending = !fateSortEntry.Descending;
+                cfg.SaveDebounced();
+            }
+            ImGui.SameLine(0f, spacing);
+            if (IconButton.Draw(FontAwesomeIcon.ArrowUp, $"##sort_up_{i}", frameHeight, tooltip: Loc.T(L.Common.MoveUp), enabled: i > 0))
+            {
+                moveUp = i;
+            }
+            ImGui.SameLine(0f, spacing);
+            if (IconButton.Draw(FontAwesomeIcon.ArrowDown, $"##sort_dn_{i}", frameHeight, tooltip: Loc.T(L.Common.MoveDown), enabled: i < cfg.FateSortOrder.Count - 1))
+            {
+                moveDown = i;
+            }
+            ImGui.SameLine(0f, spacing);
+            if (IconButton.Draw(FontAwesomeIcon.Times, $"##sort_rm_{i}", frameHeight, Styling.AccentRose, Loc.T(L.Common.Remove), cfg.FateSortOrder.Count > 1))
+            {
+                remove = i;
+            }
+        }
+        if (ListReorder.Apply(cfg.FateSortOrder, cfg.FateSortOrder.Count, moveUp, moveDown, remove))
+        {
+            cfg.SaveDebounced();
+        }
+        var remaining = sortCriterionLabels.Where(l => cfg.FateSortOrder.All(e => e.Criterion != l.Criterion)).ToArray();
+        if (remaining.Length != 0)
+        {
+            ImGui.Spacing();
+            string[] remainingLabels = remaining.Select(m => Loc.T(m.Label)).ToArray();
+            sortAddSelection = Math.Clamp(sortAddSelection, 0, remainingLabels.Length - 1);
+            SettingsControls.DrawPlainCombo("##sort_add_pick", ref sortAddSelection, remainingLabels, 260f);
+            ImGui.SameLine();
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.AccentMint))
+            {
+                if (ImGui.SmallButton($"{Loc.T(L.Common.Add)}##sort_add"))
+                {
+                    cfg.FateSortOrder.Add(new FateSortEntry
+                    {
+                        Criterion = remaining[sortAddSelection].Criterion,
+                        Descending = true
+                    });
+                    cfg.SaveDebounced();
+                }
+            }
+        }
+        ImGui.Spacing();
+        if (ImGui.SmallButton($"{Loc.T(L.Settings.ResetRecommended)}##sort_reset"))
+        {
+            cfg.FateSortOrder = FateScanner.DefaultSortOrder.Select(e => new FateSortEntry
+            {
+                Criterion = e.Criterion,
+                Descending = e.Descending
+            }).ToList();
+            cfg.SaveDebounced();
+        }
+    }
+
+    private static void DrawFateRuleSkipList(Configuration cfg)
+    {
+        for (int i = 0; i < fateRuleRows.Length; i++)
+        {
+            var (rule, label, helper) = fateRuleRows[i];
+            var ruleId = (int)rule;
+            var skipped = cfg.SkippedFateRules.Contains(ruleId);
+            if (ToggleSwitch.Draw($"##filt_rule_{ruleId}", ref skipped))
+            {
+                if (skipped)
+                {
+                    cfg.SkippedFateRules.Add(ruleId);
+                }
+                else
+                {
+                    cfg.SkippedFateRules.Remove(ruleId);
+                }
+                cfg.SaveDebounced();
+            }
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextStrong))
+            {
+                ImGui.TextUnformatted(Loc.T(label));
+            }
+            ImGui.SameLine();
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextMuted))
+            {
+                ImGui.TextUnformatted(Loc.T(helper));
+            }
+            if (rule == PublicEvent.FateRule.Collect && !skipped && ExternalPlugins.IsInstalledButDisabled(ExternalPlugin.TextAdvance))
+            {
+                var indentW = ImGui.GetFrameHeight() + 8f * ImGuiHelpers.GlobalScale;
+                ImGui.Indent(indentW);
+                using (ImRaii.PushColor(ImGuiCol.Text, Styling.AccentAmber))
+                {
+                    ImGui.TextWrapped(Loc.T(L.Settings.CollectTextAdvanceNote));
+                }
+                ImGui.Unindent(indentW);
+            }
+        }
+    }
+}

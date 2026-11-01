@@ -1,0 +1,254 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using AutoFateGrind.Core.Game.Ops;
+using AutoFateGrind.Core.Trading;
+using ECommons.DalamudServices;
+using clib.TaskSystem;
+
+namespace AutoFateGrind.Core.Tasks;
+
+public sealed class AutoTrade(TradePlan plan, IReadOnlySet<uint> skippedItemIds) : AutoCommon
+{
+    private readonly TradePlan plan = plan;
+
+    private readonly HashSet<uint> excludedItemIds = [.. skippedItemIds];
+
+    private readonly List<TradeOrder> orders = [];
+
+    private readonly HashSet<uint> boughtItemIds = [];
+
+    private readonly HashSet<uint> passedOverItemIds = [];
+
+    private int spentGems;
+
+    private bool transportBlocked;
+
+    private const int TeleportWatchdogMs = 60000;
+
+    private const int MoveWatchdogMs = 120000;
+
+    private const float WalkToleranceMeters = 4f;
+
+    private const int InteractWaitMs = 15000;
+
+    private const int ShopOpenWaitMs = 15000;
+
+    private const int ConfirmWaitMs = 10000;
+
+    private const int SpendWaitMs = 10000;
+
+    private const int SubmenuWaitMs = 10000;
+
+    private const int MenuReturnWaitMs = 2000;
+
+    private const int ShopCloseSettleMs = 350;
+
+    private const int PurchaseSettleMs = 500;
+
+    private const int MenuRetryMs = 500;
+
+    public bool BoughtAny => boughtItemIds.Count > 0;
+
+    public IReadOnlyList<TradeOrder> Orders => orders;
+
+    public TraderLocation Trader { get; private set; } = plan.Trader;
+
+    public bool TransportBlocked => transportBlocked;
+
+    public bool Failed(uint itemId)
+    {
+        if (!boughtItemIds.Contains(itemId))
+        {
+            return !passedOverItemIds.Contains(itemId);
+        }
+        return false;
+    }
+
+    protected override async Task Execute()
+    {
+        var tradePlan = plan;
+        while ((object?)tradePlan != null)
+        {
+            await Visit(tradePlan);
+            tradePlan = TradeList.Plan(GemstoneCount(), Trader.TerritoryId, Trader.Expansion, excludedItemIds, spentGems);
+        }
+        if (BoughtAny)
+        {
+            Svc.Chat.Print($"[FTA] Trade complete. Gemstones now: {GemstoneCount()}");
+        }
+    }
+
+    private async Task Visit(TradePlan trip)
+    {
+        Trader = trip.Trader;
+        for (var i = 0; i < trip.Orders.Length; i++)
+        {
+            orders.Add(trip.Orders[i]);
+            excludedItemIds.Add(trip.Orders[i].Item.ItemId);
+        }
+        AutoCommon.Diag($"AutoTrade start: trader={Trader.Name} terr={Trader.TerritoryId} items={trip.DescribeItems()}");
+        Svc.Chat.Print("[FTA] Auto-trade at " + Trader.Name + ": " + trip.DescribeItems());
+        await ReachTrader(Trader);
+        for (var orderIndex = 0; orderIndex < trip.Orders.Length; orderIndex++)
+        {
+            await BuyOrder(Trader, trip.Orders[orderIndex]);
+        }
+        Status = "Closing shop";
+        ShopInteraction.CloseShop();
+        await DelayMs(ShopCloseSettleMs);
+    }
+
+    private async Task ReachTrader(TraderLocation trader)
+    {
+        var traderPos = trader.Position;
+        var traderTerr = trader.TerritoryId;
+        if (Svc.ClientState.TerritoryType != traderTerr)
+        {
+            var result = TerritoryTeleportResult.Unreachable;
+            await RunWithStatusPinned("Teleporting to " + trader.Name, async () =>
+            {
+                result = await AttemptTerritoryTeleport(traderTerr, traderPos, "trade-teleport", TeleportWatchdogMs);
+            });
+            transportBlocked = result == TerritoryTeleportResult.Blocked;
+            ErrorIf(result != TerritoryTeleportResult.Reached, $"Could not reach {trader.Name}'s zone (still in {Svc.ClientState.TerritoryType}); aborting trade.");
+        }
+        await RunWithStatusPinned("Walking to " + trader.Name, async () =>
+        {
+            await RideAethernetShortcut(traderPos, "trade-aethernet");
+            await WalkWithRetries(() => new MoveOp((MoveOp o) => o.Move(traderTerr, traderPos, MovementConfig.Everything.WithTolerance(WalkToleranceMeters), null)), MoveWatchdogMs, "trade-walk", () => AutoCommon.WithinReach(traderPos, WalkToleranceMeters));
+        });
+    }
+
+    private async Task BuyOrder(TraderLocation trader, TradeOrder order)
+    {
+        var item = order.Item;
+        var need = TradeList.RemainingNeed(item, order.StopAtCount);
+        var wallet = GemstoneCount();
+        var qty = GemstoneCatalog.ComputeBuyQuantity(wallet, item.CostPerOne, need, spentGems);
+        if (qty <= 0)
+        {
+            passedOverItemIds.Add(item.ItemId);
+            AutoCommon.Diag($"Passing over {item.ItemName}: need {need}, wallet {wallet}g, {spentGems}g spent this trade, {item.CostPerOne}g each.");
+            return;
+        }
+        if (!(await OpenShopFor(trader, item)))
+        {
+            AutoCommon.Diag(item.ItemName + " is not in any shop " + trader.Name + " opened; not buying it.");
+            return;
+        }
+        Status = $"Buying {qty} × {item.ItemName}";
+        AutoCommon.Diag($"Shop open. Wallet={wallet}, cost={item.CostPerOne}, mode={Plugin.Cfg.SpendMode}, need={need}, qty={qty}, stack={item.StackSize}");
+        var exchangeSize = (int)item.StackSize;
+        int boughtCount;
+        int batch;
+        for (boughtCount = 0; boughtCount < qty; boughtCount += batch)
+        {
+            batch = Math.Min(exchangeSize, qty - boughtCount);
+            if (!(await ExchangeOnce(item, batch)))
+            {
+                break;
+            }
+        }
+        if (boughtCount == 0)
+        {
+            return;
+        }
+        boughtItemIds.Add(item.ItemId);
+        AutoCommon.Diag($"Bought {boughtCount} × {item.ItemName}; wallet now {GemstoneCount()}g, {spentGems}g spent this trade.");
+    }
+
+    private async Task<bool> ExchangeOnce(GemstoneTradeItem item, int quantity)
+    {
+        var wallet = GemstoneCount();
+        if (!(await WaitUntilTimed(() => ShopInteraction.BuyFromCurrencyShop(item.ItemId, quantity), ConfirmWaitMs, "buy-select")))
+        {
+            AutoCommon.Diag("Could not select " + item.ItemName + " in the open shop.");
+            return false;
+        }
+        if (!(await WaitUntilTimed(() => ShopInteraction.SelectYesnoOpen() || GemstoneCount() < wallet, ConfirmWaitMs, "wait-confirm")))
+        {
+            AutoCommon.Diag("No confirm dialog and no spend detected within window; attempting to continue.");
+        }
+        if (ShopInteraction.SelectYesnoOpen())
+        {
+            await WaitUntilTimed(() => !ShopInteraction.SelectYesnoOpen() || ShopInteraction.ClickSelectYesno(), ConfirmWaitMs, "confirm-yes");
+        }
+        if (!(await WaitUntilTimed(() => GemstoneCount() < wallet, SpendWaitMs, "wait-spend")))
+        {
+            AutoCommon.Diag($"Wallet unchanged after {SpendWaitMs / 1000}s (was {wallet}, now {GemstoneCount()}); {quantity} × {item.ItemName} was not bought.");
+            return false;
+        }
+        spentGems += wallet - GemstoneCount();
+        await DelayMs(PurchaseSettleMs);
+        return true;
+    }
+
+    private async Task<bool> OpenShopFor(TraderLocation trader, GemstoneTradeItem item)
+    {
+        if (ShopInteraction.ShopExchangeCurrencyOpen())
+        {
+            if (ShopInteraction.FindCurrencyShopSlot(item.ItemId) >= 0)
+            {
+                return true;
+            }
+            Status = "Switching shops";
+            ShopInteraction.CloseShop();
+            await WaitUntilTimed(ShopInteraction.SelectIconStringOpen, MenuReturnWaitMs, "wait-menu-return");
+        }
+        if (!ShopInteraction.SelectIconStringOpen())
+        {
+            await TalkTo(trader);
+        }
+        if (ShopInteraction.SelectIconStringOpen())
+        {
+            await NavigateSubMenu(item);
+        }
+        return ShopInteraction.ShopExchangeCurrencyOpen() && ShopInteraction.FindCurrencyShopSlot(item.ItemId) >= 0;
+    }
+
+    private async Task TalkTo(TraderLocation trader)
+    {
+        var npc = RepairOps.FindNearestObjectByBaseId(trader.EnpcBaseId);
+        ErrorIf(npc == null, $"Could not find {trader.Name} (ENpcBase {trader.EnpcBaseId}) near {trader.Position}.");
+        Status = "Talking to " + trader.Name;
+        AutoCommon.Diag($"Interacting with {trader.Name} (BaseId={npc!.BaseId})");
+        var interact = new MoveOp((MoveOp o) => o.Interact(npc!, () => ShopInteraction.ShopExchangeCurrencyOpen() || ShopInteraction.SelectIconStringOpen(), UiSkipOptions.Talk | UiSkipOptions.YesNo));
+        await RunCancellable(interact, InteractWaitMs, "trade-interact");
+        ErrorIf(interact.Fault is not null, "Interacting with " + trader.Name + " failed: " + interact.Fault?.Message);
+        ErrorIf(!(await WaitUntilTimed(() => ShopInteraction.ShopExchangeCurrencyOpen() || ShopInteraction.SelectIconStringOpen(), ShopOpenWaitMs, "wait-shop-or-menu")), $"{trader.Name} did not open a shop/menu within {ShopOpenWaitMs / 1000}s; aborting trade.");
+    }
+
+    private async Task NavigateSubMenu(GemstoneTradeItem item)
+    {
+        var menuCount = ShopInteraction.SelectIconStringEntryCount();
+        AutoCommon.Diag($"Sub-menu open with {menuCount} entries; scanning for {item.ItemName}.");
+        for (var i = 0; i < menuCount; i++)
+        {
+            if (!ShopInteraction.SelectIconStringOpen())
+            {
+                break;
+            }
+            Status = $"Trying menu entry {i + 1}/{menuCount}";
+            if (!ShopInteraction.ClickSelectIconString(i))
+            {
+                await DelayMs(MenuRetryMs);
+                continue;
+            }
+            await WaitUntilTimed(() => ShopInteraction.ShopExchangeCurrencyOpen() || ShopInteraction.SelectIconStringOpen(), SubmenuWaitMs, $"wait-submenu-{i}");
+            if (ShopInteraction.ShopExchangeCurrencyOpen())
+            {
+                if (ShopInteraction.FindCurrencyShopSlot(item.ItemId) >= 0)
+                {
+                    AutoCommon.Diag($"Found {item.ItemName} in menu entry {i}.");
+                    return;
+                }
+                AutoCommon.Diag($"Menu entry {i} did not contain {item.ItemName}; closing and trying next.");
+                ShopInteraction.CloseShop();
+                await WaitUntilTimed(ShopInteraction.SelectIconStringOpen, SubmenuWaitMs, $"wait-submenu-reopen-{i}");
+            }
+        }
+    }
+
+    private static int GemstoneCount() => GemstoneCatalog.CurrentWalletCount();
+}
